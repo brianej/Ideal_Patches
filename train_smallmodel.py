@@ -12,7 +12,7 @@ def generate_patch_estimators(
           dataset, 
           schedule, 
           batch_size : int = 64,
-          max_samples : int = 10000
+          max_samples : int = 10000,
           conditional : bool = False
           ):
     """
@@ -29,10 +29,10 @@ def generate_patch_estimators(
     return estimators
 
 def cosine_noise_schedule(t, mode='legacy'):
-	if mode == 'legacy':
-		return 1-torch.cos((t) / 1.008 * math.pi / 2) ** 2	
-	# returns beta
-	return 1-torch.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2
+    if mode == 'legacy':
+        return 1-torch.cos((t) / 1.008 * math.pi / 2) ** 2	
+    # returns beta
+    return 1-torch.cos((t + 0.008) / 1.008 * math.pi / 2) ** 2
     
 # Assumptions made: the dimension of the images are square hence will only be taking into account one of the height or width
 def train_smallmodel(model, 

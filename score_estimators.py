@@ -10,7 +10,7 @@ class LEScore(nn.Module):
 				kernel_size : int = 3,
 				batch_size :int = 32,
 				max_samples : int = 10000,
-                conditional : bool = False):
+				conditional : bool = False):
 		"""
 		Learns the ideal score for each pixel given image patches.
 		"""
@@ -21,46 +21,46 @@ class LEScore(nn.Module):
 		self.kernel_size = kernel_size
 		self.batch_size = batch_size
 		self.max_samples = max_samples
-        self.conditional = conditional
+		self.conditional = conditional
 		
 		self.trainloader = DataLoader(self.dataset, batch_size=batch_size)
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 		self.pad = self.kernel_size // 2
 
-        self.patches = []
-        self.pnorms = []
-        self.pcenters = []
-        
-        # Precompute the patches, as it does not depend on the labels
-        if not conditional:
-            seen = 0
-            for images, labels in self.trainloader:
-    			# Break the loop if the max samples are reached
-    			seen += images.shape[0]
-    			if self.max_samples is not None and seen > self.max_samples:
-    				break
-    
-    			images = images.to(self.device)
-    			# Pad the images 
-    			images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
-    
-    			# Get the patches from this batch of images
-    			patches = images.unfold(2, self.kernel_size, 1).unfold(3, self.kernel_size, 1) # [B, c, h', w', k, k]
-    			rolled = patches.permute(0, 2, 3, 1, 4, 5) # [B, h', w', c, k, k]
-    			# Reshape the patches to be a collection of all the patches from the images
-    			patches = rolled.reshape(rolled.shape[0]*rolled.shape[1]*rolled.shape[2], 
-    									rolled.shape[3], 
-    									self.kernel_size, 
-    									self.kernel_size) # [NP, c, k, k], NP = number of patches
-    			
-    			# Squared L2 Norm squares of the patches
-    			pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
-    			# Center of the patches
-    			pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
+		self.patches = []
+		self.pnorms = []
+		self.pcenters = []
+		
+		# Precompute the patches, as it does not depend on the labels
+		if not conditional:
+			seen = 0
+			for images, labels in self.trainloader:
+				# Break the loop if the max samples are reached
+				seen += images.shape[0]
+				if self.max_samples is not None and seen > self.max_samples:
+					break
+	
+				images = images.to(self.device)
+				# Pad the images 
+				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
+	
+				# Get the patches from this batch of images
+				patches = images.unfold(2, self.kernel_size, 1).unfold(3, self.kernel_size, 1) # [B, c, h', w', k, k]
+				rolled = patches.permute(0, 2, 3, 1, 4, 5) # [B, h', w', c, k, k]
+				# Reshape the patches to be a collection of all the patches from the images
+				patches = rolled.reshape(rolled.shape[0]*rolled.shape[1]*rolled.shape[2], 
+										rolled.shape[3], 
+										self.kernel_size, 
+										self.kernel_size) # [NP, c, k, k], NP = number of patches
+				
+				# Squared L2 Norm squares of the patches
+				pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
+				# Center of the patches
+				pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
 
-                self.patches.append(patches)
-                self.pnorms.append(pnorms)
-                self.pcenters.append(pcenters)
+				self.patches.append(patches)
+				self.pnorms.append(pnorms)
+				self.pcenters.append(pcenters)
 
 	def forward(self, x, t, label=None):
 		"""
@@ -107,29 +107,29 @@ class LEScore(nn.Module):
 			if images.shape[0] == 0:
 				continue
 
-            if self.conditional:
-    			images = images.to(self.device)
-    			# Pad the images 
-    			images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
-    
-    			# Get the patches from this batch of images
-    			patches = images.unfold(2, self.kernel_size, 1).unfold(3, self.kernel_size, 1) # [B, c, h', w', k, k]
-    			rolled = patches.permute(0, 2, 3, 1, 4, 5) # [B, h', w', c, k, k]
-    			# Reshape the patches to be a collection of all the patches from the images
-    			patches = rolled.reshape(rolled.shape[0]*rolled.shape[1]*rolled.shape[2], 
-    									rolled.shape[3], 
-    									self.kernel_size, 
-    									self.kernel_size) # [NP, c, k, k], NP = number of patches
-    			
-    			# Squared L2 Norm squares of the patches
-    			pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
-    			# Center of the patches
-    			pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
-            else:
-                patches = self.patches[i]
-                pnorms = self.pnorms[i]
-                pcenters = self.pcenters[i]
-                
+			if self.conditional:
+				images = images.to(self.device)
+				# Pad the images 
+				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
+	
+				# Get the patches from this batch of images
+				patches = images.unfold(2, self.kernel_size, 1).unfold(3, self.kernel_size, 1) # [B, c, h', w', k, k]
+				rolled = patches.permute(0, 2, 3, 1, 4, 5) # [B, h', w', c, k, k]
+				# Reshape the patches to be a collection of all the patches from the images
+				patches = rolled.reshape(rolled.shape[0]*rolled.shape[1]*rolled.shape[2], 
+										rolled.shape[3], 
+										self.kernel_size, 
+										self.kernel_size) # [NP, c, k, k], NP = number of patches
+				
+				# Squared L2 Norm squares of the patches
+				pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
+				# Center of the patches
+				pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
+			else:
+				patches = self.patches[i]
+				pnorms = self.pnorms[i]
+				pcenters = self.pcenters[i]
+				
 			# The dot product of the patches and the image
 			pdotx = F.conv2d(xpadded, patches, padding=0) # [B, NP, H, W]
 			
@@ -181,11 +181,11 @@ class IdealScore(nn.Module):
 
 		Args:
 			x: noised input images [B, C, H, W]
-            t: time-step
-            label: optional label to filter training samples
+			t: time-step
+			label: optional label to filter training samples
 
-        Returns:
-            score tensor [B, C, H, W]
+		Returns:
+			score tensor [B, C, H, W]
 		"""
 		x = x.to(self.device)
  
