@@ -3,7 +3,7 @@ import random
 import torch
 import wandb
 from torch.utils.data import DataLoader, Subset
-from torchvision import transforms
+import torch.nn as nn
 
 from small_model import SmallModel
 from train_smallmodel import train_smallmodel, cosine_noise_schedule, generate_patch_estimators
@@ -31,7 +31,6 @@ def parse_args():
 
 def main():
     args = parse_args()
-
     # Reproducibility
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -53,7 +52,12 @@ def main():
 
     # Initialize model
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
-    model = SmallModel(input_shape, args.patch_sizes).to(device)
+    model = SmallModel(input_shape, args.patch_sizes)
+    if torch.cuda.device_count() > 1:
+        print(f"Found {torch.cuda.device_count()} GPUs — using DataParallel")
+        model = nn.DataParallel(model)
+    model.to(device)
+
     if args.wandb:
         wandb.watch(model, log="all")
 

@@ -26,14 +26,12 @@ class LEScore(nn.Module):
 		self.trainloader = DataLoader(self.dataset, batch_size=batch_size)
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 		self.pad = self.kernel_size // 2
-
-		self.patches = []
-		self.pnorms = []
-		self.pcenters = []
 		
 		# Precompute the patches, as it does not depend on the labels
-		if not conditional:
+		if not self.conditional:
 			seen = 0
+			patches_list, norms_list, centers_list = [], [], []
+
 			for images, labels in self.trainloader:
 				# Break the loop if the max samples are reached
 				seen += images.shape[0]
@@ -58,9 +56,13 @@ class LEScore(nn.Module):
 				# Center of the patches
 				pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
 
-				self.patches.append(patches)
-				self.pnorms.append(pnorms)
-				self.pcenters.append(pcenters)
+				patches_list.append(patches)
+				norms_list.append(pnorms)
+				centers_list.append(pcenters)
+			
+			self.patches = torch.cat(patches_list, dim=0) # [NP, C, k, k]
+			self.pnorms = torch.cat(norms_list, dim=0) # [NP]
+			self.pcenters = torch.cat(centers_list, dim=0) # [NP, C]
 
 	def forward(self, x, t, label=None):
 		"""
@@ -92,22 +94,21 @@ class LEScore(nn.Module):
 		denominator = torch.zeros(b,h,w, device=self.device) # [B, h, w]
 		subtraction = None
 
-		seen = 0 # Number of data from the dataset seen so far
-  
-		for i, (images, labels) in enumerate(self.trainloader):
-			# Break the loop if the max samples are reached
-			seen += images.shape[0]
-			if self.max_samples is not None and seen > self.max_samples:
-				break
+		if self.conditional:
+			seen = 0 # Number of data from the dataset seen so far
+			for i, (images, labels) in enumerate(self.trainloader):
+				# Break the loop if the max samples are reached
+				seen += images.shape[0]
+				if self.max_samples is not None and seen > self.max_samples:
+					break
 
-			# Filtering the images of the dataset based on the label
-			if label is not None:
-				mask = (labels == label).squeeze()
-				images = images[mask]
-			if images.shape[0] == 0:
-				continue
+				# Filtering the images of the dataset based on the label
+				if label is not None:
+					mask = (labels == label).squeeze()
+					images = images[mask]
+				if images.shape[0] == 0:
+					continue
 
-			if self.conditional:
 				images = images.to(self.device)
 				# Pad the images 
 				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
@@ -125,35 +126,62 @@ class LEScore(nn.Module):
 				pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
 				# Center of the patches
 				pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
-			else:
-				patches = self.patches[i]
-				pnorms = self.pnorms[i]
-				pcenters = self.pcenters[i]
+					
+				# The dot product of the patches and the image
+				pdotx = F.conv2d(xpadded, patches, padding=0) # [B, NP, H, W]
 				
-			# The dot product of the patches and the image
-			pdotx = F.conv2d(xpadded, patches, padding=0) # [B, NP, H, W]
-			
-			# Expansion of the dot product to get the exp part of the gaussian
-			exp_args = -(xnorms[:,None,:,:] - 2*at*pdotx + (at**2)*pnorms[None,:,None,None])/(2*bt.pow(2)) # [B, NP, h,w]  
+				# Expansion of the dot product to get the exp part of the gaussian
+				exp_args = -(xnorms[:,None,:,:] - 2*at*pdotx + (at**2)*pnorms[None,:,None,None])/(2*bt.pow(2)) # [B, NP, h,w]  
 
-			# To keep the computation stable
-			if subtraction is None:
-				subtraction = torch.amax(exp_args, dim=1, keepdim=True)
-			else:
-				new_subtraction = torch.amax(exp_args, dim=1, keepdim=True)
-				delta_subtraction = (new_subtraction>subtraction)*new_subtraction+(subtraction>=new_subtraction)*subtraction # Mask
-				numerator /= torch.exp(delta_subtraction-subtraction) # [B, c, h, w]
-				denominator /= torch.exp(delta_subtraction-subtraction)[:,0,:,:] # [B, h, w]
-				subtraction = delta_subtraction
+				# To keep the computation stable
+				if subtraction is None:
+					subtraction = torch.amax(exp_args, dim=1, keepdim=True)
+				else:
+					new_subtraction = torch.amax(exp_args, dim=1, keepdim=True)
+					delta_subtraction = (new_subtraction>subtraction)*new_subtraction+(subtraction>=new_subtraction)*subtraction # Mask
+					numerator /= torch.exp(delta_subtraction-subtraction) # [B, c, h, w]
+					denominator /= torch.exp(delta_subtraction-subtraction)[:,0,:,:] # [B, h, w]
+					subtraction = delta_subtraction
 
-			# The exponential part of the gaussian
-			exp_vals = torch.exp(exp_args - subtraction) # [B, NP, h, w] 
-			# The difference of the center of the noised patches and the image
-			num_vals = (x[:,None,:,:,:] - at*pcenters[None,:,:,None,None]) # [B, NP, c, h, w]
-			
-			numerator += torch.sum(exp_vals[:,:,None,:,:]*num_vals, dim=1)
-			denominator += torch.sum(exp_vals, dim=1)
+				# The exponential part of the gaussian
+				exp_vals = torch.exp(exp_args - subtraction) # [B, NP, h, w] 
+				# The difference of the center of the noised patches and the image
+				num_vals = (x[:,None,:,:,:] - at*pcenters[None,:,:,None,None]) # [B, NP, c, h, w]
+				
+				numerator += torch.sum(exp_vals[:,:,None,:,:]*num_vals, dim=1)
+				denominator += torch.sum(exp_vals, dim=1)
+		else:
+			NP = self.patches.shape[0]
+			for start in range(0, NP, self.patch_batch_size):
+				end = start + self.patch_batch_size
+				patches = self.patches[start:end]
+				pnorms = self.pnorms[start:end]
+				pcenters = self.pcenters[start:end]
+					
+				# The dot product of the patches and the image
+				pdotx = F.conv2d(xpadded, patches, padding=0) # [B, NP, H, W]
+				
+				# Expansion of the dot product to get the exp part of the gaussian
+				exp_args = -(xnorms[:,None,:,:] - 2*at*pdotx + (at**2)*pnorms[None,:,None,None])/(2*bt.pow(2)) # [B, NP, h,w]  
 
+				# To keep the computation stable
+				if subtraction is None:
+					subtraction = torch.amax(exp_args, dim=1, keepdim=True)
+				else:
+					new_subtraction = torch.amax(exp_args, dim=1, keepdim=True)
+					delta_subtraction = (new_subtraction>subtraction)*new_subtraction+(subtraction>=new_subtraction)*subtraction # Mask
+					numerator /= torch.exp(delta_subtraction-subtraction) # [B, c, h, w]
+					denominator /= torch.exp(delta_subtraction-subtraction)[:,0,:,:] # [B, h, w]
+					subtraction = delta_subtraction
+
+				# The exponential part of the gaussian
+				exp_vals = torch.exp(exp_args - subtraction) # [B, NP, h, w] 
+				# The difference of the center of the noised patches and the image
+				num_vals = (x[:,None,:,:,:] - at*pcenters[None,:,:,None,None]) # [B, NP, c, h, w]
+				
+				numerator += torch.sum(exp_vals[:,:,None,:,:]*num_vals, dim=1)
+				denominator += torch.sum(exp_vals, dim=1)
+				
 		return -numerator/(denominator[:,None,:,:]* bt.pow(2)) # [B, c, h, w]
 
 

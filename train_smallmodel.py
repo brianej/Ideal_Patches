@@ -5,6 +5,7 @@ from torch.nn.functional import mse_loss
 import math
 from score_estimators import LEScore, IdealScore
 import wandb
+import torch.nn as nn
 
 def generate_patch_estimators(
           image_dim : int, 
@@ -19,13 +20,25 @@ def generate_patch_estimators(
     Generates a list of patch score estimators for each patch size
     """
     estimators = []
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     for patch_size in patch_sizes:
         if patch_size >= image_dim:
-            estimators.append(IdealScore(dataset, schedule=schedule, max_samples=max_samples, conditional=conditional))
+            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples, conditional=conditional)
+            if torch.cuda.device_count() > 1:
+                estimator = nn.DataParallel(estimator)
+            estimator.to(device)
+            estimators.append(estimator.t)
             break # stop if the kernel size is larger than the image size
+
+        estimator = LEScore(dataset, schedule=schedule, kernel_size=patch_size, 
+                                  batch_size=batch_size, max_samples=max_samples, 
+                                  conditional=conditional)
+        if torch.cuda.device_count() > 1:
+            estimator = nn.DataParallel(estimator)
+        estimator.to(device)
+        estimators.append(estimator.t)
         
-        estimators.append(LEScore(dataset, schedule=schedule, kernel_size=patch_size, 
-                                  batch_size=batch_size, max_samples=max_samples, conditional=conditional))
     return estimators
 
 def cosine_noise_schedule(t, mode='legacy'):
