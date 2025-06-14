@@ -28,6 +28,7 @@ class LEScore(nn.Module):
 		
 		# Precompute the patches, as it does not depend on the labels
 		if not self.conditional:
+			device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 			seen = 0
 			patches_list, norms_list, centers_list = [], [], []
 
@@ -36,7 +37,9 @@ class LEScore(nn.Module):
 				seen += images.shape[0]
 				if self.max_samples is not None and seen > self.max_samples:
 					break
-	
+
+				images = images.to(device)
+				
 				# Pad the images 
 				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
 	
