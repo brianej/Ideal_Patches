@@ -13,6 +13,7 @@ def generate_patch_estimators(
           schedule, 
           batch_size : int = 64,
           max_samples : int = 10000
+          conditional : bool = False
           ):
     """
     Generates a list of patch score estimators for each patch size
@@ -20,11 +21,11 @@ def generate_patch_estimators(
     estimators = []
     for patch_size in patch_sizes:
         if patch_size >= image_dim:
-            estimators.append(IdealScore(dataset, schedule=schedule, max_samples=max_samples))
+            estimators.append(IdealScore(dataset, schedule=schedule, max_samples=max_samples, conditional=conditional))
             break # stop if the kernel size is larger than the image size
         
         estimators.append(LEScore(dataset, schedule=schedule, kernel_size=patch_size, 
-                                  batch_size=batch_size, max_samples=max_samples))
+                                  batch_size=batch_size, max_samples=max_samples, conditional=conditional))
     return estimators
 
 def cosine_noise_schedule(t, mode='legacy'):
@@ -49,7 +50,8 @@ def train_smallmodel(model,
                     wd : float = 0.001,
                     conditional : bool = False,
                     save_interval : int = 1,
-                    checkpoint :str = './model_checkpoints/smallmodel'):
+                    checkpoint :str = './model_checkpoints/smallmodel',
+                    args = False):
     """
     Train a small diffusion model by matching predicted weights to the ideal combination of score estimators over patch sizes.
     """
@@ -60,7 +62,7 @@ def train_smallmodel(model,
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
 
     # Initialise the patch size 
-    estimators = generate_patch_estimators(image_dim, patch_sizes, dataset, noise_schedule, batch_size=batch_size, max_samples=max_samples)
+    estimators = generate_patch_estimators(image_dim, patch_sizes, dataset, noise_schedule, batch_size=batch_size, max_samples=max_samples, conditional=conditional)
     ideal_score_estimator = IdealScore(dataset, schedule=noise_schedule, max_samples=max_samples)
 
     for epoch in range(num_epochs):
@@ -91,7 +93,7 @@ def train_smallmodel(model,
             if conditional:
                 predicted_weights = model(noised_images, label=labels)
             else:
-                model(noised_images) # [B, S, C, H, W]
+                predicted_weights = model(noised_images) # [B, S, C, H, W]
                 
             predicted_score = torch.sum(predicted_weights * scores, dim=1) # [B, C, H, W]
 
@@ -102,7 +104,7 @@ def train_smallmodel(model,
             loop.set_description(f"Epoch [{epoch+1}/{num_epochs}]")
             loop.set_postfix(loss=loss.item())
 
-            if wandb.run:
+            if args.wandb:
                 wandb.log({
                     "Loss": loss.item(),
                     "Epoch": epoch,
@@ -113,6 +115,6 @@ def train_smallmodel(model,
         scheduler.step()
 
         if epoch % save_interval == 0:
-            torch.save(model, f"{checkpoint}_epoch{epoch}.pt")
+            torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}.pt")
             if wandb.run:
                 wandb.save(f"{checkpoint}_epoch{epoch}.pt")
