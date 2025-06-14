@@ -28,7 +28,7 @@ def generate_patch_estimators(
             if torch.cuda.device_count() > 1:
                 estimator = nn.DataParallel(estimator)
             estimator.to(device)
-            estimators.append(estimator.t)
+            estimators.append(estimator)
             break # stop if the kernel size is larger than the image size
 
         estimator = LEScore(dataset, schedule=schedule, kernel_size=patch_size, 
@@ -95,13 +95,14 @@ def train_smallmodel(model,
             
             noise = torch.normal(0,1,images.shape, device=device)
             noised_images = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise # to go to this point in the forward pass
-    
-            # The ideal score for the noised image
-            ideal_score_t = ideal_score_estimator(noised_images, t)
-            scores = torch.zeros(b, len(patch_sizes), c, h, w, device=device) # [B, S, C, H, W]
-            for i, estimator in enumerate(estimators):
-                 scores_i = estimator(noised_images, t).to(device=device)
-                 scores[:, i, :, :, :] = scores_i
+
+            with torch.no_grad():
+                # The ideal score for the noised image
+                ideal_score_t = ideal_score_estimator(noised_images, t)
+                scores = torch.zeros(b, len(patch_sizes), c, h, w, device=device) # [B, S, C, H, W]
+                for i, estimator in enumerate(estimators):
+                    scores_i = estimator(noised_images, t).to(device=device)
+                    scores[:, i, :, :, :] = scores_i
 
             if conditional:
                 predicted_weights = model(noised_images, label=labels)
