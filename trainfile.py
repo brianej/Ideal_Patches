@@ -55,7 +55,7 @@ def main():
     model = SmallModel(input_shape, args.patch_sizes)
     if torch.cuda.device_count() > 1:
         print(f"Found {torch.cuda.device_count()} GPUs")
-        model = nn.DataParallel(model)
+        model = nn.DataParallel(model, device_ids=[0])
     model.to(device)
 
     if args.wandb:

@@ -20,25 +20,20 @@ def generate_patch_estimators(
     Generates a list of patch score estimators for each patch size
     """
     estimators = []
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
 
-    for patch_size in patch_sizes:
+    for i, patch_size in enumerate(patch_sizes):
+        dev = devices[i % len(devices)]  
         if patch_size >= image_dim:
-            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples, conditional=conditional)
-            if torch.cuda.device_count() > 1:
-                estimator = nn.DataParallel(estimator)
-            estimator.to(device)
+            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples, conditional=conditional).to(dev)
             estimators.append(estimator)
             break # stop if the kernel size is larger than the image size
 
         estimator = LEScore(dataset, schedule=schedule, kernel_size=patch_size, 
                                   batch_size=batch_size, max_samples=max_samples, 
-                                  conditional=conditional)
-        if torch.cuda.device_count() > 1:
-            estimator = nn.DataParallel(estimator)
-        estimator.to(device)
-        estimators.append(estimator)
+                                  conditional=conditional).to(dev)
 
+        estimators.append(estimator)
     return estimators
 
 def cosine_noise_schedule(t, mode='legacy'):
@@ -68,8 +63,9 @@ def train_smallmodel(model,
     """
     Train a small diffusion model by matching predicted weights to the ideal combination of score estimators over patch sizes.
     """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model.to(device).train()
+    model.train()
+    devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
+    main_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
@@ -85,24 +81,30 @@ def train_smallmodel(model,
             b, c, h, w = images.shape
             optimizer.zero_grad()
    
-            images = images.to(device)
-            labels = labels.to(device)
+            images = images.to(main_device)
+            labels = labels.to(main_device)
 
-            t = torch.randint(0, max_t, (1,), device=device).float() / max_t 
+            t = torch.randint(0, max_t, (1,), device=main_device).float() / max_t 
        
             # Get noise level from schedule
             beta_t = noise_schedule(t) 
             
-            noise = torch.normal(0,1,images.shape, device=device)
+            noise = torch.normal(0,1,images.shape, device=main_device)
             noised_images = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise # to go to this point in the forward pass
 
             with torch.no_grad():
                 # The ideal score for the noised image
                 ideal_score_t = ideal_score_estimator(noised_images, t)
-                scores = torch.zeros(b, len(patch_sizes), c, h, w, device=device) # [B, S, C, H, W]
+                patch_scores = []
+                
                 for i, estimator in enumerate(estimators):
-                    scores_i = estimator(noised_images, t).to(device=device)
-                    scores[:, i, :, :, :] = scores_i
+                    dev = devices[i % len(devices)]  
+                    x_dev = noised_images.to(dev)
+                    t = t.to(dev)
+                    scores_i = estimator(x_dev, t)
+                    patch_scores.append(scores_i.to(main_device))
+
+                scores = torch.stack(patch_scores, dim=1)
 
             if conditional:
                 predicted_weights = model(noised_images, label=labels)
