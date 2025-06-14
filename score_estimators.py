@@ -39,7 +39,7 @@ class LEScore(nn.Module):
 					break
 
 				images = images.to(device)
-				
+
 				# Pad the images 
 				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
 	
@@ -156,8 +156,8 @@ class LEScore(nn.Module):
 				denominator += torch.sum(exp_vals, dim=1)
 		else:
 			NP = self.patches.shape[0]
-			for start in range(0, NP, self.patch_batch_size):
-				end = start + self.patch_batch_size
+			for start in range(0, NP, self.batch_size):
+				end = start + self.batch_size
 				patches = self.patches[start:end]
 				pnorms = self.pnorms[start:end]
 				pcenters = self.pcenters[start:end]
