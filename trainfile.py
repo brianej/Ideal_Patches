@@ -41,7 +41,7 @@ def main():
     if args.wandb:
         wandb.init(
             entity="brianej-personal",
-            project="Optimal Weights", 
+            project="Ideal Patches", 
             config=vars(args)
         )
 

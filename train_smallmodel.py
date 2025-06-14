@@ -83,11 +83,16 @@ def train_smallmodel(model,
     
             # The ideal score for the noised image
             ideal_score_t = ideal_score_estimator(noised_images, t)
-            scores = torch.zeros(b, len(patch_sizes), c, h, w)
+            scores = torch.zeros(b, len(patch_sizes), c, h, w, device=device) # [B, S, C, H, W]
             for i, estimator in enumerate(estimators):
-                 scores[:, i, :, :, :] = estimator(noised_images, t)
+                 scores_i = estimator(noised_images, t).to(device=device)
+                 scores[:, i, :, :, :] = scores_i
 
-            predicted_weights = model(noised_images, label=labels) if conditional else model(noised_images) # [B, S, C, H, W]
+            if conditional:
+                predicted_weights = model(noised_images, label=labels)
+            else:
+                model(noised_images) # [B, S, C, H, W]
+                
             predicted_score = torch.sum(predicted_weights * scores, dim=1) # [B, C, H, W]
 
             loss = mse_loss(predicted_score, ideal_score_t)

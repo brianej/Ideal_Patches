@@ -6,7 +6,7 @@ class SmallModel(nn.Module):
     def __init__(self, input_shape, patch_sizes):
         super().__init__()
         
-        self.b, self.c, self.h, self.w = input_shape
+        self.c, self.h, self.w = input_shape
         self.num_patches = len(patch_sizes)
         self.expanded = self.c * self.num_patches
         
@@ -36,6 +36,7 @@ class SmallModel(nn.Module):
 
     def forward(self, x):
         # Convolutional and pooling layers
+        b, _, _, _ = x.shape
         x = self.layer1(x)
 
         x = self.bottleneck(x)
@@ -49,7 +50,7 @@ class SmallModel(nn.Module):
         x = self.up1(x)     # [B, S*C, H, W]
 
         # Reorder it
-        x = x.view(self.b, self.num_patches, self.c, self.h, self.w) # [B, S, C, H, W]
+        x = x.view(b, self.num_patches, self.c, self.h, self.w) # [B, S, C, H, W]
         
         # Apply softmax to normalise scores across patches
         x = self.softmax(x)
