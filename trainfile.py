@@ -54,7 +54,7 @@ def main():
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
     model = SmallModel(input_shape, args.patch_sizes)
     if torch.cuda.device_count() > 1:
-        print(f"Found {torch.cuda.device_count()} GPUs — using DataParallel")
+        print(f"Found {torch.cuda.device_count()} GPUs")
         model = nn.DataParallel(model)
     model.to(device)
 

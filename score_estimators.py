@@ -24,7 +24,6 @@ class LEScore(nn.Module):
 		self.conditional = conditional
 		
 		self.trainloader = DataLoader(self.dataset, batch_size=batch_size)
-		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 		self.pad = self.kernel_size // 2
 		
 		# Precompute the patches, as it does not depend on the labels
@@ -38,7 +37,6 @@ class LEScore(nn.Module):
 				if self.max_samples is not None and seen > self.max_samples:
 					break
 	
-				images = images.to(self.device)
 				# Pad the images 
 				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
 	
@@ -60,9 +58,12 @@ class LEScore(nn.Module):
 				norms_list.append(pnorms)
 				centers_list.append(pcenters)
 			
-			self.patches = torch.cat(patches_list, dim=0) # [NP, C, k, k]
-			self.pnorms = torch.cat(norms_list, dim=0) # [NP]
-			self.pcenters = torch.cat(centers_list, dim=0) # [NP, C]
+			patches = torch.cat(patches_list, dim=0) # [NP, C, k, k]
+			pnorms = torch.cat(norms_list, dim=0) # [NP]
+			pcenters = torch.cat(centers_list, dim=0) # [NP, C]
+			self.register_buffer('patches',   patches)
+			self.register_buffer('pnorms',    pnorms)
+			self.register_buffer('pcenters',  pcenters)
 
 	def forward(self, x, t, label=None):
 		"""
@@ -76,11 +77,11 @@ class LEScore(nn.Module):
 		Returns:
 			score tensor [B, C, H, W]
 		"""
-		x = x.to(self.device)
+		device = x.device
 		b, c, h, w = x.shape
 
-		bt = self.schedule(t).sqrt().to(self.device)
-		at = (1-self.schedule(t)).sqrt().to(self.device)
+		bt = self.schedule(t).sqrt().to(device)
+		at = (1-self.schedule(t)).sqrt().to(device)
 
 		# Pad the input image with 0s
 		xpadded = F.pad(x, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0) 
@@ -90,8 +91,8 @@ class LEScore(nn.Module):
 		xnorms = xpatches.pow(2).sum(dim=(1, 4, 5)) # [B, h, w]
 
 		# The numerator and denominator for the score
-		numerator = torch.zeros(x.shape, device=self.device) # [B, c, h, w]
-		denominator = torch.zeros(b,h,w, device=self.device) # [B, h, w]
+		numerator = torch.zeros(x.shape, device=device) # [B, c, h, w]
+		denominator = torch.zeros(b,h,w, device=device) # [B, h, w]
 		subtraction = None
 
 		if self.conditional:
@@ -109,7 +110,7 @@ class LEScore(nn.Module):
 				if images.shape[0] == 0:
 					continue
 
-				images = images.to(self.device)
+				images = images.to(device)
 				# Pad the images 
 				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
 	
@@ -201,7 +202,6 @@ class IdealScore(nn.Module):
 		self.schedule = schedule
 
 		self.trainloader = DataLoader(self.dataset, batch_size=self.max_samples)
-		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 	def forward(self, x, t, label=None): 
 		"""
@@ -215,10 +215,11 @@ class IdealScore(nn.Module):
 		Returns:
 			score tensor [B, C, H, W]
 		"""
-		x = x.to(self.device)
+		device = x.device
+		x = x.to(device)
  
-		bt = self.schedule(t).sqrt().to(self.device)
-		at = (1-self.schedule(t)).sqrt().to(self.device)
+		bt = self.schedule(t).sqrt().to(device)
+		at = (1-self.schedule(t)).sqrt().to(device)
 
 		images, labels = next(iter(self.trainloader)) # [B, c, h, w], B = max_samples
 
@@ -227,7 +228,7 @@ class IdealScore(nn.Module):
 			mask = (labels == label).squeeze()
 			images = images[mask]
 
-		images = images.to(self.device)
+		images = images.to(device)
 
 		# The part in the numerator for the difference of the noised images and the input image
 		pwise_diffs = x[:,None,:,:,:]-at*images[None,:,:,:,:] # [B, NP, c, h,w] 

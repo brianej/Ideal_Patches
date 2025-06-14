@@ -37,8 +37,8 @@ def generate_patch_estimators(
         if torch.cuda.device_count() > 1:
             estimator = nn.DataParallel(estimator)
         estimator.to(device)
-        estimators.append(estimator.t)
-        
+        estimators.append(estimator)
+
     return estimators
 
 def cosine_noise_schedule(t, mode='legacy'):
