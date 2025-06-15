@@ -48,14 +48,14 @@ def main():
 
     # Load dataset and subset
     train_dataset, metadata = get_dataset(args.dataset)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
 
     # Initialize model
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
     model = SmallModel(input_shape, args.patch_sizes)
     if torch.cuda.device_count() > 1:
         print(f"Found {torch.cuda.device_count()} GPUs")
-        model = nn.DataParallel(model, device_ids=[0])
+        model = nn.DataParallel(model, device_ids=[3])
     model.to(device)
 
     if args.wandb:

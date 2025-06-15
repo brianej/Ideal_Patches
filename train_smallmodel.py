@@ -6,6 +6,8 @@ import math
 from score_estimators import LEScore, IdealScore
 import wandb
 import torch.nn as nn
+from torch.nn.parallel import parallel_apply
+from torch import amp
 
 def generate_patch_estimators(
           image_dim : int, 
@@ -65,14 +67,14 @@ def train_smallmodel(model,
     """
     model.train()
     devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-    main_device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    main_device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
 
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
 
     # Initialise the patch size 
     estimators = generate_patch_estimators(image_dim, patch_sizes, dataset, noise_schedule, batch_size=batch_size, max_samples=max_samples, conditional=conditional)
-    ideal_score_estimator = IdealScore(dataset, schedule=noise_schedule, max_samples=max_samples)
+    ideal_score_estimator = IdealScore(dataset, schedule=noise_schedule, max_samples=max_samples).to(main_device)
 
     for epoch in range(num_epochs):
         loop = tqdm(train_loader, desc=f'Epoch {epoch}/{num_epochs}', leave=True)
@@ -81,8 +83,8 @@ def train_smallmodel(model,
             b, c, h, w = images.shape
             optimizer.zero_grad()
    
-            images = images.to(main_device)
-            labels = labels.to(main_device)
+            images = images.to(main_device, non_blocking=True)
+            labels = labels.to(main_device, non_blocking=True)
 
             t = torch.randint(0, max_t, (1,), device=main_device).float() / max_t 
        
@@ -92,7 +94,7 @@ def train_smallmodel(model,
             noise = torch.normal(0,1,images.shape, device=main_device)
             noised_images = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise # to go to this point in the forward pass
 
-            with torch.no_grad():
+            """with torch.no_grad():
                 # The ideal score for the noised image
                 ideal_score_t = ideal_score_estimator(noised_images, t)
                 patch_scores = []
@@ -104,6 +106,27 @@ def train_smallmodel(model,
                     scores_i = estimator(x_dev, t)
                     patch_scores.append(scores_i.to(main_device))
 
+                scores = torch.stack(patch_scores, dim=1)"""
+
+            with torch.no_grad(), amp.autocast('cuda'):
+                # ideal score on cuda:0
+                ideal_score_t = ideal_score_estimator(noised_images, t)
+
+                # build (input, t) tuples for each estimator & device
+                args = [
+                    (
+                        noised_images.to(devices[i], non_blocking=True),
+                        t.to(devices[i],    non_blocking=True)
+                    )
+                    for i in range(len(estimators))
+                ]
+
+                # kick off _all_ the forwards at once
+                outputs = parallel_apply(estimators, args)
+
+                # bring them back and stack
+                patch_scores = [out.to(main_device, non_blocking=True)
+                                for out in outputs]
                 scores = torch.stack(patch_scores, dim=1)
 
             if conditional:
