@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+import time
 
 class LEScore(nn.Module):
 	def __init__(self, 
@@ -25,50 +26,8 @@ class LEScore(nn.Module):
 		
 		self.trainloader = DataLoader(self.dataset, batch_size=batch_size)
 		self.pad = self.kernel_size // 2
-		
-		# Precompute the patches, as it does not depend on the labels
-		if not self.conditional:
-			with torch.no_grad():
-				device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-				seen = 0
-				patches_list, norms_list, centers_list = [], [], []
 
-				for images, labels in self.trainloader:
-					# Break the loop if the max samples are reached
-					seen += images.shape[0]
-					if self.max_samples is not None and seen > self.max_samples:
-						break
-
-					images = images.to(device)
-
-					# Pad the images 
-					images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
-		
-					# Get the patches from this batch of images
-					patches = images.unfold(2, self.kernel_size, 1).unfold(3, self.kernel_size, 1) # [B, c, h', w', k, k]
-					rolled = patches.permute(0, 2, 3, 1, 4, 5) # [B, h', w', c, k, k]
-					# Reshape the patches to be a collection of all the patches from the images
-					patches = rolled.reshape(rolled.shape[0]*rolled.shape[1]*rolled.shape[2], 
-											rolled.shape[3], 
-											self.kernel_size, 
-											self.kernel_size) # [NP, c, k, k], NP = number of patches
-					
-					# Squared L2 Norm squares of the patches
-					pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
-					# Center of the patches
-					pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
-
-					patches_list.append(patches)
-					norms_list.append(pnorms)
-					centers_list.append(pcenters)
-				
-				patches = torch.cat(patches_list, dim=0) # [NP, C, k, k]
-				pnorms = torch.cat(norms_list, dim=0) # [NP]
-				pcenters = torch.cat(centers_list, dim=0) # [NP, C]
-				self.register_buffer('patches',   patches)
-				self.register_buffer('pnorms',    pnorms)
-				self.register_buffer('pcenters',  pcenters)
-
+	@torch.no_grad()
 	def forward(self, x, t, label=None):
 		"""
 		Computes the ideal score for each pixel in the input at time t
@@ -82,7 +41,7 @@ class LEScore(nn.Module):
 			score tensor [B, C, H, W]
 		"""
 		device = x.device
-		b, c, h, w = x.shape
+		b, _, h, w = x.shape
 
 		bt = self.schedule(t).sqrt().to(device)
 		at = (1-self.schedule(t)).sqrt().to(device)
@@ -113,7 +72,7 @@ class LEScore(nn.Module):
 			if images.shape[0] == 0:
 				continue
 
-			"""images = images.to(device)
+			images = images.to(device)
 			# Pad the images 
 			images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
 
@@ -153,95 +112,7 @@ class LEScore(nn.Module):
 			num_vals = (x[:,None,:,:,:] - at*pcenters[None,:,:,None,None]) # [B, NP, c, h, w]
 			
 			numerator += torch.sum(exp_vals[:,:,None,:,:]*num_vals, dim=1)
-			denominator += torch.sum(exp_vals, dim=1)"""
-
-		if self.conditional:
-			seen = 0 # Number of data from the dataset seen so far
-			for i, (images, labels) in enumerate(self.trainloader):
-				# Break the loop if the max samples are reached
-				seen += images.shape[0]
-				if self.max_samples is not None and seen > self.max_samples:
-					break
-
-				# Filtering the images of the dataset based on the label
-				if label is not None:
-					mask = (labels == label).squeeze()
-					images = images[mask]
-				if images.shape[0] == 0:
-					continue
-
-				images = images.to(device)
-				# Pad the images 
-				images = F.pad(images, (self.pad, self.pad, self.pad, self.pad), mode='constant', value=0)
-	
-				# Get the patches from this batch of images
-				patches = images.unfold(2, self.kernel_size, 1).unfold(3, self.kernel_size, 1) # [B, c, h', w', k, k]
-				rolled = patches.permute(0, 2, 3, 1, 4, 5) # [B, h', w', c, k, k]
-				# Reshape the patches to be a collection of all the patches from the images
-				patches = rolled.reshape(rolled.shape[0]*rolled.shape[1]*rolled.shape[2], 
-										rolled.shape[3], 
-										self.kernel_size, 
-										self.kernel_size) # [NP, c, k, k], NP = number of patches
-				
-				# Squared L2 Norm squares of the patches
-				pnorms = torch.sum(patches**2, dim=(1,2,3)) # [NP]
-				# Center of the patches
-				pcenters = patches[:,:,self.pad,self.pad] # [NP, c] 
-					
-				# The dot product of the patches and the image
-				pdotx = F.conv2d(xpadded, patches, padding=0) # [B, NP, H, W]
-				
-				# Expansion of the dot product to get the exp part of the gaussian
-				exp_args = -(xnorms[:,None,:,:] - 2*at*pdotx + (at**2)*pnorms[None,:,None,None])/(2*bt.pow(2)) # [B, NP, h,w]  
-
-				# To keep the computation stable
-				if subtraction is None:
-					subtraction = torch.amax(exp_args, dim=1, keepdim=True)
-				else:
-					new_subtraction = torch.amax(exp_args, dim=1, keepdim=True)
-					delta_subtraction = (new_subtraction>subtraction)*new_subtraction+(subtraction>=new_subtraction)*subtraction # Mask
-					numerator /= torch.exp(delta_subtraction-subtraction) # [B, c, h, w]
-					denominator /= torch.exp(delta_subtraction-subtraction)[:,0,:,:] # [B, h, w]
-					subtraction = delta_subtraction
-
-				# The exponential part of the gaussian
-				exp_vals = torch.exp(exp_args - subtraction) # [B, NP, h, w] 
-				# The difference of the center of the noised patches and the image
-				num_vals = (x[:,None,:,:,:] - at*pcenters[None,:,:,None,None]) # [B, NP, c, h, w]
-				
-				numerator += torch.sum(exp_vals[:,:,None,:,:]*num_vals, dim=1)
-				denominator += torch.sum(exp_vals, dim=1)
-		else:
-			NP = self.patches.shape[0]
-			for start in range(0, NP, self.batch_size):
-				end = start + self.batch_size
-				patches = self.patches[start:end]
-				pnorms = self.pnorms[start:end]
-				pcenters = self.pcenters[start:end]
-					
-				# The dot product of the patches and the image
-				pdotx = F.conv2d(xpadded, patches, padding=0) # [B, NP, H, W]
-				
-				# Expansion of the dot product to get the exp part of the gaussian
-				exp_args = -(xnorms[:,None,:,:] - 2*at*pdotx + (at**2)*pnorms[None,:,None,None])/(2*bt.pow(2)) # [B, NP, h,w]  
-
-				# To keep the computation stable
-				if subtraction is None:
-					subtraction = torch.amax(exp_args, dim=1, keepdim=True)
-				else:
-					new_subtraction = torch.amax(exp_args, dim=1, keepdim=True)
-					delta_subtraction = (new_subtraction>subtraction)*new_subtraction+(subtraction>=new_subtraction)*subtraction # Mask
-					numerator /= torch.exp(delta_subtraction-subtraction) # [B, c, h, w]
-					denominator /= torch.exp(delta_subtraction-subtraction)[:,0,:,:] # [B, h, w]
-					subtraction = delta_subtraction
-
-				# The exponential part of the gaussian
-				exp_vals = torch.exp(exp_args - subtraction) # [B, NP, h, w] 
-				# The difference of the center of the noised patches and the image
-				num_vals = (x[:,None,:,:,:] - at*pcenters[None,:,:,None,None]) # [B, NP, c, h, w]
-				
-				numerator += torch.sum(exp_vals[:,:,None,:,:]*num_vals, dim=1)
-				denominator += torch.sum(exp_vals, dim=1)
+			denominator += torch.sum(exp_vals, dim=1)
 				
 		return -numerator/(denominator[:,None,:,:]* bt.pow(2)) # [B, c, h, w]
 
@@ -263,6 +134,7 @@ class IdealScore(nn.Module):
 
 		self.trainloader = DataLoader(self.dataset, batch_size=self.max_samples)
 
+	@torch.no_grad()
 	def forward(self, x, t, label=None): 
 		"""
 		Computes the ideal score for the given input x at time t

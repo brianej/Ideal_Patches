@@ -61,84 +61,66 @@ def train_smallmodel(model,
                     conditional : bool = False,
                     save_interval : int = 1,
                     checkpoint :str = './model_checkpoints/smallmodel',
-                    args = False):
+                    args = False,
+                    dist = None,
+                    device = None,
+                    accum_steps = 1):
     """
     Train a small diffusion model by matching predicted weights to the ideal combination of score estimators over patch sizes.
     """
     model.train()
-    devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
-    main_device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+    scaler = amp.GradScaler()
 
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=wd)
     scheduler = optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
 
     # Initialise the patch size 
     estimators = generate_patch_estimators(image_dim, patch_sizes, dataset, noise_schedule, batch_size=batch_size, max_samples=max_samples, conditional=conditional)
-    ideal_score_estimator = IdealScore(dataset, schedule=noise_schedule, max_samples=max_samples).to(main_device)
+    ideal_score_estimator = IdealScore(dataset, schedule=noise_schedule, max_samples=max_samples).to(device)
 
     for epoch in range(num_epochs):
+        if dist is not None:
+            train_loader.sampler.set_epoch(epoch)
         loop = tqdm(train_loader, desc=f'Epoch {epoch}/{num_epochs}', leave=True)
         
         for batch_num, (images, labels) in enumerate(loop):
             b, c, h, w = images.shape
             optimizer.zero_grad()
    
-            images = images.to(main_device, non_blocking=True)
-            labels = labels.to(main_device, non_blocking=True)
+            images = images.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
-            t = torch.randint(0, max_t, (1,), device=main_device).float() / max_t 
-       
-            # Get noise level from schedule
-            beta_t = noise_schedule(t) 
-            
-            noise = torch.normal(0,1,images.shape, device=main_device)
-            noised_images = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise # to go to this point in the forward pass
+            t = torch.randint(0, max_t, (1,), device=device).float() / max_t 
 
-            """with torch.no_grad():
+            with amp.autocast():
+                # Get noise level from schedule
+                beta_t = noise_schedule(t) 
+                
+                noise = torch.normal(0,1,images.shape, device=device)
+                noised_images = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise # to go to this point in the forward pass
+
                 # The ideal score for the noised image
-                ideal_score_t = ideal_score_estimator(noised_images, t)
-                patch_scores = []
-                
+                ideal_score_t = ideal_score_estimator(noised_images, t).to(device)
+                scores = torch.zeros(b, len(patch_sizes), c, h, w, device=device) # [B, S, C, H, W]
                 for i, estimator in enumerate(estimators):
-                    dev = devices[i % len(devices)]  
-                    x_dev = noised_images.to(dev)
-                    t = t.to(dev)
-                    scores_i = estimator(x_dev, t)
-                    patch_scores.append(scores_i.to(main_device))
+                    scores_i = estimator(noised_images, t).to(device=device)
+                    scores[:, i, :, :, :] = scores_i
 
-                scores = torch.stack(patch_scores, dim=1)"""
+                if conditional:
+                    predicted_weights = model(noised_images, label=labels)
+                else:
+                    predicted_weights = model(noised_images) # [B, S, C, H, W]
+                    
+                predicted_score = torch.sum(predicted_weights * scores, dim=1) # [B, C, H, W]
 
-            with torch.no_grad(), amp.autocast('cuda'):
-                # ideal score on cuda:0
-                ideal_score_t = ideal_score_estimator(noised_images, t)
+                loss = mse_loss(predicted_score, ideal_score_t)
 
-                # build (input, t) tuples for each estimator & device
-                args = [
-                    (
-                        noised_images.to(devices[i], non_blocking=True),
-                        t.to(devices[i],    non_blocking=True)
-                    )
-                    for i in range(len(estimators))
-                ]
+                scaler.scale(loss).backward()
 
-                # kick off _all_ the forwards at once
-                outputs = parallel_apply(estimators, args)
-
-                # bring them back and stack
-                patch_scores = [out.to(main_device, non_blocking=True)
-                                for out in outputs]
-                scores = torch.stack(patch_scores, dim=1)
-
-            if conditional:
-                predicted_weights = model(noised_images, label=labels)
-            else:
-                predicted_weights = model(noised_images) # [B, S, C, H, W]
-                
-            predicted_score = torch.sum(predicted_weights * scores, dim=1) # [B, C, H, W]
-
-            loss = mse_loss(predicted_score, ideal_score_t)
-            loss.backward()
-            optimizer.step()
+                if (batch_num + 1) % accum_steps == 0:
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
 
             loop.set_description(f"Epoch [{epoch+1}/{num_epochs}]")
             loop.set_postfix(loss=loss.item())

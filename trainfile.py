@@ -2,11 +2,15 @@ import argparse
 import random
 import torch
 import wandb
-from torch.utils.data import DataLoader, Subset
+from torch.utils.data import DataLoader
 import torch.nn as nn
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.data.distributed import DistributedSampler
+from torch.cuda.amp import GradScaler, autocast
 
 from small_model import SmallModel
-from train_smallmodel import train_smallmodel, cosine_noise_schedule, generate_patch_estimators
+from train_smallmodel import train_smallmodel, cosine_noise_schedule
 from utils.data import get_dataset
 
 
@@ -18,7 +22,7 @@ def parse_args():
     parser.add_argument('--lr', type=float, default=2e-4)
     parser.add_argument('--gamma', type=float, default=0.99995, help='LR scheduler decay')
     parser.add_argument('--wd', type=float, default=1e-3, help='Weight decay')
-    parser.add_argument('--patch_sizes', nargs='+', type=int, default=[3,5])
+    parser.add_argument('--patch_sizes', nargs='+', type=int, default=[3,7,11])
     parser.add_argument('--max_samples', type=int, default=60000)
     parser.add_argument('--max_t', type=int, default=1000)
     parser.add_argument('--seed', type=int, default=42)
@@ -26,6 +30,7 @@ def parse_args():
     parser.add_argument('--conditional', type=bool, default=False)
     parser.add_argument('--checkpoint', type=str, default='./model_checkpoints/smallmodel')
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
+    parser.add_argument('--local_rank', type=int, default=0, help='DDP local process rank')
     return parser.parse_args()
 
 
@@ -36,7 +41,7 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
     
-    # Initialize W&B
+    # Initialise W&B
     if args.wandb:
         wandb.init(
             entity="brianej-personal",
@@ -44,19 +49,29 @@ def main():
             config=vars(args)
         )
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dist.init_process_group(backend='nccl')
+    torch.cuda.set_device(args.local_rank)
+    device = torch.device(f'cuda:{args.local_rank}')
+
+    # enable cuDNN auto-tuner
+    torch.backends.cudnn.benchmark = True
 
     # Load dataset and subset
     train_dataset, metadata = get_dataset(args.dataset)
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4, pin_memory=True)
+    sampler = DistributedSampler(train_dataset)
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        sampler=sampler,
+        num_workers=8,
+        pin_memory=True,
+    )
 
-    # Initialize model
+    # Initialise model
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
-    model = SmallModel(input_shape, args.patch_sizes)
-    if torch.cuda.device_count() > 1:
-        print(f"Found {torch.cuda.device_count()} GPUs")
-        model = nn.DataParallel(model, device_ids=[3])
-    model.to(device)
+    model = SmallModel(input_shape, args.patch_sizes).to(device)
+    model = torch.compile(model)
+    model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
 
     if args.wandb:
         wandb.watch(model, log="all")
@@ -79,7 +94,10 @@ def main():
         conditional=args.conditional,
         save_interval=args.save_interval,
         checkpoint=args.checkpoint,
-        args=args
+        args=args,
+        dist=dist,
+        device=device,
+        accum_steps=args.accum_steps
     )
 
     # Finish W&B
