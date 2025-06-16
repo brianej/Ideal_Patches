@@ -8,6 +8,7 @@ import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data.distributed import DistributedSampler
 from torch.cuda.amp import GradScaler, autocast
+import os
 
 from small_model import SmallModel
 from train_smallmodel import train_smallmodel, cosine_noise_schedule
@@ -30,7 +31,6 @@ def parse_args():
     parser.add_argument('--conditional', type=bool, default=False)
     parser.add_argument('--checkpoint', type=str, default='./model_checkpoints/smallmodel')
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
-    parser.add_argument('--local_rank', type=int, default=0, help='DDP local process rank')
     parser.add_argument('--accum_steps', type=int, default=1, help='Gradient accumulation steps')
     return parser.parse_args()
 
@@ -51,8 +51,9 @@ def main():
         )
 
     dist.init_process_group(backend='nccl')
-    torch.cuda.set_device(args.local_rank)
-    device = torch.device(f'cuda:{args.local_rank}')
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f'cuda:{local_rank}')
 
     # enable cuDNN auto-tuner
     torch.backends.cudnn.benchmark = True
@@ -72,7 +73,7 @@ def main():
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
     model = SmallModel(input_shape, args.patch_sizes).to(device)
     model = torch.compile(model)
-    model = DDP(model, device_ids=[args.local_rank], output_device=args.local_rank)
+    model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
     if args.wandb:
         wandb.watch(model, log="all")

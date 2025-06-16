@@ -92,7 +92,7 @@ def train_smallmodel(model,
 
             t = torch.randint(0, max_t, (1,), device=device).float() / max_t 
 
-            with amp.autocast():
+            with amp.autocast(device_type="cuda"):
                 # Get noise level from schedule
                 beta_t = noise_schedule(t) 
                 
