@@ -8,6 +8,7 @@ import wandb
 import torch.nn as nn
 from torch.nn.parallel import parallel_apply
 from torch import amp
+import os
 
 def generate_patch_estimators(
           image_dim : int, 
@@ -63,11 +64,13 @@ def train_smallmodel(model,
                     checkpoint :str = './model_checkpoints/smallmodel',
                     args = False,
                     dist = None,
-                    device = None,
-                    accum_steps = 1):
+                    device = None):
     """
     Train a small diffusion model by matching predicted weights to the ideal combination of score estimators over patch sizes.
     """
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    is_main_process = (local_rank == 0)
+
     model.train()
     scaler = amp.GradScaler()
 
@@ -117,15 +120,15 @@ def train_smallmodel(model,
 
                 scaler.scale(loss).backward()
 
-                if (batch_num + 1) % accum_steps == 0:
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
+
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
 
             loop.set_description(f"Epoch [{epoch+1}/{num_epochs}]")
             loop.set_postfix(loss=loss.item())
 
-            if args.wandb:
+            if args.wandb and is_main_process:
                 wandb.log({
                     "Loss": loss.item(),
                     "Epoch": epoch,
@@ -137,5 +140,5 @@ def train_smallmodel(model,
 
         if epoch % save_interval == 0:
             torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}.pt")
-            if wandb.run:
+            if wandb.run and is_main_process:
                 wandb.save(f"{checkpoint}_epoch{epoch}.pt")

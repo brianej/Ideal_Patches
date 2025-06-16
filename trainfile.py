@@ -31,7 +31,6 @@ def parse_args():
     parser.add_argument('--conditional', type=bool, default=False)
     parser.add_argument('--checkpoint', type=str, default='./model_checkpoints/smallmodel')
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
-    parser.add_argument('--accum_steps', type=int, default=1, help='Gradient accumulation steps')
     return parser.parse_args()
 
 
@@ -41,9 +40,12 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
+
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    is_main_process = (local_rank == 0)
     
     # Initialise W&B
-    if args.wandb:
+    if args.wandb and is_main_process:
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
@@ -75,7 +77,7 @@ def main():
     model = torch.compile(model)
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
-    if args.wandb:
+    if args.wandb and is_main_process:
         wandb.watch(model, log="all")
 
     # Train
@@ -98,12 +100,11 @@ def main():
         checkpoint=args.checkpoint,
         args=args,
         dist=dist,
-        device=device,
-        accum_steps=args.accum_steps
+        device=device
     )
 
     # Finish W&B
-    if args.wandb:
+    if args.wandb and is_main_process:
         wandb.finish()
 
 
