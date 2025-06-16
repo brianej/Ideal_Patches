@@ -31,6 +31,7 @@ def parse_args():
     parser.add_argument('--checkpoint', type=str, default='./model_checkpoints/smallmodel')
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
     parser.add_argument('--local_rank', type=int, default=0, help='DDP local process rank')
+    parser.add_argument('--accum_steps', type=int, default=1, help='Gradient accumulation steps')
     return parser.parse_args()
 
 
