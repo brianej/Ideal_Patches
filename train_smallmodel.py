@@ -98,7 +98,7 @@ def train_smallmodel(model,
             loss = mse_loss(predicted_score, ideal_score_t)
 
             if torch.isnan(loss):
-                print(f"[NaN skipped] iter={iter:6d}  loss={loss.item():.4e}")
+                print(f"[NaN skipped] iter={batch_num, epoch}  loss={loss.item():.4e}")
                 optimizer.zero_grad(set_to_none=True)
                 continue
 
@@ -122,3 +122,9 @@ def train_smallmodel(model,
                     wandb.save(f"{checkpoint}_epoch{epoch}_batch{batch_num}.pt")
             
         scheduler.step()
+
+        torch.save(model, f"{checkpoint}_epoch{epoch}.pt")
+        if wandb.run:
+            wandb.save(f"{checkpoint}_epoch{epoch}.pt")
+        
+    
