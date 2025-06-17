@@ -48,7 +48,7 @@ def train_smallmodel(model,
                     gamma : float = 0.99995,
                     wd : float = 0.001,
                     conditional : bool = False,
-                    save_interval : int = 1,
+                    save_interval : int = 100,
                     checkpoint :str = './model_checkpoints/smallmodel'):
     """
     Train a small diffusion model by matching predicted weights to the ideal combination of score estimators over patch sizes.
@@ -96,6 +96,12 @@ def train_smallmodel(model,
             predicted_score = torch.sum(predicted_weights * scores, dim=1) # [B, C, H, W]
 
             loss = mse_loss(predicted_score, ideal_score_t)
+
+            if torch.isnan(loss):
+                print(f"[NaN skipped] iter={iter:6d}  loss={loss.item():.4e}")
+                optimizer.zero_grad(set_to_none=True)
+                continue
+
             loss.backward()
             optimizer.step()
 
@@ -109,10 +115,10 @@ def train_smallmodel(model,
                     "Batch" : batch_num,
                     "Global Batch" : epoch * len(train_loader) + batch_num
                 })
+
+            if batch_num % save_interval == 0:
+                torch.save(model, f"{checkpoint}_epoch{epoch}_batch{batch_num}.pt")
+                if wandb.run:
+                    wandb.save(f"{checkpoint}_epoch{epoch}_batch{batch_num}.pt")
             
         scheduler.step()
-
-        if epoch % save_interval == 0:
-            torch.save(model, f"{checkpoint}_epoch{epoch}.pt")
-            if wandb.run:
-                wandb.save(f"{checkpoint}_epoch{epoch}.pt")
