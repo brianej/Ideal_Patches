@@ -40,15 +40,13 @@ def main():
     random.seed(args.seed)
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    is_main_process = (local_rank == 0)
     
     # Initialise W&B
-    if args.wandb and is_main_process:
+    if args.wandb:
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
+            group="4GPU",
             config=vars(args)
         )
 
@@ -77,7 +75,7 @@ def main():
     model = torch.compile(model)
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
-    if args.wandb and is_main_process:
+    if args.wandb:
         wandb.watch(model, log="all")
 
     # Train
@@ -104,7 +102,7 @@ def main():
     )
 
     # Finish W&B
-    if args.wandb and is_main_process:
+    if args.wandb:
         wandb.finish()
 
 

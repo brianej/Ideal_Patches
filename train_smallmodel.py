@@ -68,9 +68,6 @@ def train_smallmodel(model,
     """
     Train a small diffusion model by matching predicted weights to the ideal combination of score estimators over patch sizes.
     """
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    is_main_process = (local_rank == 0)
-
     model.train()
     scaler = amp.GradScaler()
 
@@ -128,7 +125,7 @@ def train_smallmodel(model,
             loop.set_description(f"Epoch [{epoch+1}/{num_epochs}]")
             loop.set_postfix(loss=loss.item())
 
-            if args.wandb and is_main_process:
+            if args.wandb:
                 wandb.log({
                     "Loss": loss.item(),
                     "Epoch": epoch,
@@ -140,5 +137,5 @@ def train_smallmodel(model,
 
         if epoch % save_interval == 0:
             torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}.pt")
-            if wandb.run and is_main_process:
+            if wandb.run:
                 wandb.save(f"{checkpoint}_epoch{epoch}.pt")
