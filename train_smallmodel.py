@@ -117,13 +117,13 @@ def train_smallmodel(model,
                 })
 
             if batch_num % save_interval == 0:
-                torch.save(model, f"{checkpoint}_epoch{epoch}_batch{batch_num}.pt")
+                torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}_batch{batch_num}.pt")
                 if wandb.run:
                     wandb.save(f"{checkpoint}_epoch{epoch}_batch{batch_num}.pt")
             
         scheduler.step()
 
-        torch.save(model, f"{checkpoint}_epoch{epoch}.pt")
+        torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}.pt")
         if wandb.run:
             wandb.save(f"{checkpoint}_epoch{epoch}.pt")
         
