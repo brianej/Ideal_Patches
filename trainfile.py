@@ -52,7 +52,7 @@ def main():
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
 
     # Initialize model
-    input_shape = (args.batch_size, metadata['num_channels'], metadata['image_size'], metadata['image_size'])
+    input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
     model = SmallModel(input_shape, args.patch_sizes).to(device)
     if args.wandb:
         wandb.watch(model, log="all")
