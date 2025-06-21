@@ -46,7 +46,7 @@ def main():
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
-            group="4GPU",
+            group="4GPU-3/11/19/27",
             config=vars(args)
         )
 
@@ -72,6 +72,8 @@ def main():
     # Initialise model
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
     model = SmallModel(input_shape, args.patch_sizes).to(device)
+    # state = torch.load(PATH, map_location=device)
+    # model.load_state_dict(state)
     model = torch.compile(model)
     model = DDP(model, device_ids=[local_rank], output_device=local_rank)
 
