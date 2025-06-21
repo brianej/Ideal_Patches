@@ -113,7 +113,8 @@ def train_smallmodel(model,
                     "Loss": loss.item(),
                     "Epoch": epoch,
                     "Batch" : batch_num,
-                    "Global Batch" : epoch * len(train_loader) + batch_num
+                    "Global Batch" : epoch * len(train_loader) + batch_num,
+                    "t (Time)" : t
                 })
 
             if batch_num % save_interval == 0:
