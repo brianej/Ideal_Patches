@@ -59,7 +59,7 @@ class SmallModel(nn.Module):
 
         # Sinusoidal embedding -> bias addition
         emb = get_time_embedding(t)  
-        x = x + emb.view(b, 64, 1, 1)
+        x = x + emb.view(1, 64, 1, 1)
 
         # 1x1x1 Convolutional layer to get scores for each patch size
         x = self.score_layer(x)  # [B, S*C, H/4, W/4]
