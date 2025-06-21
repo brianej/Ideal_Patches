@@ -38,7 +38,7 @@ def train_smallmodel(model,
                     dataset,
                     train_loader,
                     noise_schedule, 
-                    patch_sizes : int = [1,3,5],
+                    patch_sizes : list = [1,3,5],
                     batch_size : int = 64,
                     max_samples : int = 10000,
                     image_dim : int = 32,
@@ -114,7 +114,7 @@ def train_smallmodel(model,
                     "Epoch": epoch,
                     "Batch" : batch_num,
                     "Global Batch" : epoch * len(train_loader) + batch_num,
-                    "t (Time)" : t
+                    "t (Time)" : t[0]
                 })
 
             if batch_num % save_interval == 0:

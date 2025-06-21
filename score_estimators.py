@@ -25,6 +25,7 @@ class LEScore(nn.Module):
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 		self.pad = self.kernel_size // 2
 
+	@torch.no_grad()
 	def forward(self, x, t, label=None):
 		"""
 		Computes the ideal score for each pixel in the input at time t
@@ -131,6 +132,7 @@ class IdealScore(nn.Module):
 		self.trainloader = DataLoader(self.dataset, batch_size=self.max_samples)
 		self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+	@torch.no_grad()
 	def forward(self, x, t, label=None): 
 		"""
 		Computes the ideal score for the given input x at time t
