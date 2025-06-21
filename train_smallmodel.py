@@ -5,10 +5,7 @@ from torch.nn.functional import mse_loss
 import math
 from score_estimators import LEScore, IdealScore
 import wandb
-import torch.nn as nn
-from torch.nn.parallel import parallel_apply
 from torch import amp
-import os
 
 def generate_patch_estimators(
           image_dim : int, 
@@ -28,7 +25,7 @@ def generate_patch_estimators(
     for i, patch_size in enumerate(patch_sizes):
         dev = devices[i % len(devices)]  
         if patch_size >= image_dim:
-            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples, conditional=conditional).to(dev)
+            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples).to(dev)
             estimators.append(estimator)
             break # stop if the kernel size is larger than the image size
 
@@ -50,7 +47,7 @@ def train_smallmodel(model,
                     dataset,
                     train_loader,
                     noise_schedule, 
-                    patch_sizes : int = [1,3,5],
+                    patch_sizes : list = [1,3,5],
                     batch_size : int = 64,
                     max_samples : int = 10000,
                     image_dim : int = 32,
@@ -60,7 +57,7 @@ def train_smallmodel(model,
                     gamma : float = 0.99995,
                     wd : float = 0.001,
                     conditional : bool = False,
-                    save_interval : int = 1,
+                    save_interval : int = 100,
                     checkpoint :str = './model_checkpoints/smallmodel',
                     args = False,
                     dist = None,
@@ -90,7 +87,10 @@ def train_smallmodel(model,
             images = images.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
+            # ---- safe per-image time-step sampling ----
+            eps = 1e-4                                # keep away from 0 and 1
             t = torch.randint(0, max_t, (1,), device=device).float() / max_t 
+            t = t * (1 - 2*eps) + eps                 # now t ∈ [eps, 1-eps]
 
             with amp.autocast(device_type="cuda"):
                 # Get noise level from schedule
@@ -117,10 +117,13 @@ def train_smallmodel(model,
 
                 scaler.scale(loss).backward()
 
+            if torch.isnan(loss):
+                print(f"[NaN skipped] iter={batch_num, epoch}  loss={loss.item():.4e}")
+                optimizer.zero_grad(set_to_none=True)
+                continue
 
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
+            scaler.step(optimizer)    
+            scaler.update()  
 
             loop.set_description(f"Epoch [{epoch+1}/{num_epochs}]")
             loop.set_postfix(loss=loss.item())
@@ -130,12 +133,17 @@ def train_smallmodel(model,
                     "Loss": loss.item(),
                     "Epoch": epoch,
                     "Batch" : batch_num,
-                    "Global Batch" : epoch * len(train_loader) + batch_num
+                    "Global Batch" : epoch * len(train_loader) + batch_num,
+                    "t (Time)" : t[0]
                 })
+            
+            if batch_num % save_interval == 0:
+                torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}_batch{batch_num}_re.pt")
+                if wandb.run:
+                    wandb.save(f"{checkpoint}_epoch{epoch}_batch{batch_num}_re.pt")
             
         scheduler.step()
 
-        if epoch % save_interval == 0:
-            torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}.pt")
-            if wandb.run:
-                wandb.save(f"{checkpoint}_epoch{epoch}.pt")
+        torch.save(model.state_dict(), f"{checkpoint}_epoch{epoch}.pt")
+        if wandb.run:
+            wandb.save(f"{checkpoint}_epoch{epoch}.pt")
