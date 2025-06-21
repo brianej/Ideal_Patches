@@ -2,6 +2,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+def get_time_embedding(t, emb_dim=64):
+    """
+    Gets sinusoidal embeddings for continuous timestep
+    """
+    if emb_dim % 2 != 0:
+        raise ValueError("emb_dim must be even for sinusoidal embedding")
+    half = emb_dim // 2
+    dev = t.device
+    # Compute frequency scalars from 1 -> 10000
+    freqs = 10000 ** (torch.arange(half, device=dev).float() / (half - 1))  # [half]
+    # Shape [1, half]
+    args = t.view(-1, 1) / freqs.unsqueeze(0)
+    # Concatenate sin and cos: [1, 2*half]
+    emb = torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
+    return emb #[1,64]
+
 class SmallModel(nn.Module):
     def __init__(self, input_shape, patch_sizes):
         super().__init__()
@@ -34,12 +50,16 @@ class SmallModel(nn.Module):
         
         self.softmax = nn.Softmax(dim=1)  # Softmax to normalise scores across patches
 
-    def forward(self, x):
+    def forward(self, x, t):
         # Convolutional and pooling layers
         b, _, _, _ = x.shape
         x = self.layer1(x)
 
         x = self.bottleneck(x)
+
+        # Sinusoidal embedding -> bias addition
+        emb = get_time_embedding(t)  
+        x = x + emb.view(b, 64, 1, 1)
 
         # 1x1x1 Convolutional layer to get scores for each patch size
         x = self.score_layer(x)  # [B, S*C, H/4, W/4]

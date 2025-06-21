@@ -106,10 +106,7 @@ def train_smallmodel(model,
                     scores_i = estimator(noised_images, t).to(device=device)
                     scores[:, i, :, :, :] = scores_i
 
-                if conditional:
-                    predicted_weights = model(noised_images, label=labels)
-                else:
-                    predicted_weights = model(noised_images) # [B, S, C, H, W]
+                predicted_weights = model(noised_images, t) # [B, S, C, H, W]
                     
                 predicted_score = torch.sum(predicted_weights * scores, dim=1) # [B, C, H, W]
 
