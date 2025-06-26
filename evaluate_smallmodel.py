@@ -18,6 +18,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--patch_sizes', nargs='+', type=int, default=[3, 7, 11])
     parser.add_argument('--max_t', type=int, default=1000)
+    parser.add_argument('--max_samples', type=int, default=10000)
+    parser.add_argument('--checkpoint', type=str, default='./model_checkpoints/smallmodel.pt')
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--num_batches', type=int, default=10)
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
@@ -78,10 +80,14 @@ def main():
         wandb.watch(model, log="all")
 
     for batch_idx, (images, _) in enumerate(test_loader):
+        if batch_idx >= args.num_batches:
+            break
         images = images.to(device)
         b, c, h, w = images.shape
 
-        t = torch.rand(1, device=device)
+        eps = 1e-4
+        t = torch.randint(0, args.max_t, (1,), device=device).float() / args.max_t
+        t = t * (1 - 2 * eps) + eps
         beta_t = cosine_noise_schedule(t)
         noise = torch.randn_like(images)
         noised = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise
@@ -100,10 +106,10 @@ def main():
         if args.wandb:
             wandb.log({
                 "Loss": loss.item(),
-                "t (Time)" : t[0],
-                "weights" : weights,
-                "Predicted Score" : predicted_score,
-                "Ideal Score" : ideal_score
+                "t (Time)": t[0],
+                "weights": weights.detach().cpu(),
+                "Predicted Score": predicted_score.detach().cpu(),
+                "Ideal Score": ideal_score.detach().cpu()
             })
 
     # Finish W&B
