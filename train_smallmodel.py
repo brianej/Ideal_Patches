@@ -14,24 +14,23 @@ def generate_patch_estimators(
           schedule, 
           batch_size : int = 64,
           max_samples : int = 10000,
-          conditional : bool = False
+          conditional : bool = False,
+          device = None
           ):
     """
     Generates a list of patch score estimators for each patch size
     """
     estimators = []
-    devices = [f"cuda:{i}" for i in range(torch.cuda.device_count())]
 
     for i, patch_size in enumerate(patch_sizes):
-        dev = devices[i % len(devices)]  
         if patch_size >= image_dim:
-            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples).to(dev)
+            estimator = IdealScore(dataset, schedule=schedule, max_samples=max_samples).to(device)
             estimators.append(estimator)
             break # stop if the kernel size is larger than the image size
 
         estimator = LEScore(dataset, schedule=schedule, kernel_size=patch_size, 
                                   batch_size=batch_size, max_samples=max_samples, 
-                                  conditional=conditional).to(dev)
+                                  conditional=conditional).to(device)
 
         estimators.append(estimator)
     return estimators
