@@ -27,7 +27,7 @@ def parse_args():
     parser.add_argument('--max_samples', type=int, default=60000)
     parser.add_argument('--max_t', type=int, default=1000)
     parser.add_argument('--seed', type=int, default=42)
-    parser.add_argument('--save_interval', type=int, default=1)
+    parser.add_argument('--save_interval', type=int, default=100)
     parser.add_argument('--conditional', type=bool, default=False)
     parser.add_argument('--checkpoint', type=str, default='./model_checkpoints/smallmodel')
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
@@ -46,7 +46,7 @@ def main():
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
-            group="4GPU",
+            group="Timestep-3/7",
             config=vars(args)
         )
 

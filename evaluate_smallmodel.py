@@ -5,6 +5,7 @@ import torch.distributed as dist
 from torch.utils.data import DataLoader, DistributedSampler
 import random
 import wandb
+import pandas as pd
 
 from small_model import SmallModel
 from train_smallmodel import generate_patch_estimators, cosine_noise_schedule
@@ -32,15 +33,6 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    # Initialise W&B
-    if args.wandb:
-        wandb.init(
-            entity="brianej-personal",
-            project="Ideal Patches", 
-            group="Evaluate-",
-            config=vars(args)
-        )
-
     dist.init_process_group(backend='nccl')
     local_rank = int(os.environ.get('LOCAL_RANK', 0))
     torch.cuda.set_device(local_rank)
@@ -59,7 +51,7 @@ def main():
     model = SmallModel(input_shape, args.patch_sizes).to(device)
     model = torch.compile(model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device.index])
-    state_dict = torch.load(args.checkpoint, map_location=device)
+    state_dict = torch.load("./model_checkpoints/smallmodel_epoch2_batch0_re.pt")
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -67,47 +59,89 @@ def main():
     estimators = generate_patch_estimators(metadata['image_size'], args.patch_sizes,
                                           test_dataset, cosine_noise_schedule,
                                           batch_size=args.batch_size,
-                                          max_samples=args.max_samples)
+                                          device=device)
     
-    ideal_estimator = IdealScore(test_dataset, schedule=cosine_noise_schedule,
-                                 max_samples=args.max_samples).to(device)
+    ideal_estimator = IdealScore(test_dataset, schedule=cosine_noise_schedule).to(device)
 
-    mse = torch.nn.MSELoss()
+    mse = torch.nn.MSELoss(reduction="none")
+
+    # Initialise W&B
+    if args.wandb:
+        wandb.init(
+            entity="brianej-personal",
+            project="Ideal Patches", 
+            group="Evaluate-3/7",
+            config=vars(args)
+        )
 
     if args.wandb:
         wandb.watch(model, log="all")
+
+    step_logs = pd.DataFrame(
+        columns=[
+            "Batch",
+            "Element",
+            "Image",
+            "Noised Image",
+            "Loss",
+            "Timestep",
+            "Weights",
+            "Predicted Score",
+            "Ideal Score",
+        ]
+    )
 
     for batch_idx, (images, _) in enumerate(test_loader):
         images = images.to(device)
         b, c, h, w = images.shape
 
-        t = torch.rand(1, device=device)
+        # ---- safe per-image time-step sampling ----
+        eps = 1e-4                                # keep away from 0 and 1
+        t = torch.randint(0, args.max_t, (1,), device=device).float() / args.max_t 
+        t = t * (1 - 2*eps) + eps                 # now t ∈ [eps, 1-eps]
         beta_t = cosine_noise_schedule(t)
-        noise = torch.randn_like(images)
-        noised = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise
 
-        ideal_score = ideal_estimator(noised, t)
+        noise = torch.normal(0,1,images.shape, device=device)
+        noised_images = torch.sqrt(1 - beta_t)[:, None, None, None] * images + torch.sqrt(beta_t)[:, None, None, None] * noise # to go to this point in the forward pass
+
+        ideal_score = ideal_estimator(noised_images, t).to(device)
 
         scores = torch.zeros(b, len(args.patch_sizes), c, h, w, device=device)
         for i, estimator in enumerate(estimators):
-            scores[:, i] = estimator(noised, t).to(device)
+            scores[:, i, :, :, :] = estimator(noised_images, t).to(device)
 
-        weights = model(noised, t)
+        weights = model(noised_images, t)
         predicted_score = torch.sum(weights * scores, dim=1)
 
         loss = mse(predicted_score, ideal_score)
 
         if args.wandb:
             wandb.log({
-                "Loss": loss.item(),
-                "t (Time)" : t[0],
-                "weights" : weights,
-                "Predicted Score" : predicted_score,
-                "Ideal Score" : ideal_score
+                "Loss": loss.mean().item(),
+                "t (Time)" : t[0].item(),
+                "weights" : weights.detach().cpu().numpy(),
+                "Predicted Score" : predicted_score.detach().cpu().numpy(),
+                "Ideal Score" : ideal_score.detach().cpu().numpy()
             })
+        
+        for img_idx in range(b):
+            step_logs.loc[len(step_logs)] = {
+                "Batch": batch_idx,
+                "Element": img_idx,
+                "Image" : images[img_idx].detach().cpu().numpy(),
+                "Noised Image" : noised_images[img_idx].detach().cpu().numpy(),
+                "Loss": loss[img_idx].detach().cpu().numpy(),
+                "Timestep": t[0].item(),
+                "Weights": weights[img_idx].detach().cpu().numpy(),
+                "Predicted Score": predicted_score[img_idx].detach().cpu().numpy(),
+                "Ideal Score": ideal_score[img_idx].detach().cpu().numpy(),
+            }
 
     # Finish W&B
     if args.wandb:
+        if not step_logs.empty:
+            table = wandb.Table(dataframe=step_logs)
+            wandb.log({"Evaluation": table})
         wandb.finish()
 
 
