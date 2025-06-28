@@ -19,7 +19,7 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--patch_sizes', nargs='+', type=int, default=[3, 7, 11])
     parser.add_argument('--max_t', type=int, default=1000)
-    parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--seed', type=int, default=43)
     parser.add_argument('--num_batches', type=int, default=10)
     parser.add_argument('--wandb', action='store_true', help='Log to Weights & Biases')
     return parser.parse_args()
@@ -51,7 +51,7 @@ def main():
     model = SmallModel(input_shape, args.patch_sizes).to(device)
     model = torch.compile(model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device.index])
-    state_dict = torch.load("./model_checkpoints/smallmodel_epoch2_batch0_re.pt")
+    state_dict = torch.load("./model_checkpoints/smallmodel_epoch2_batch0-3-7.pt")
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -70,7 +70,7 @@ def main():
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
-            group="Evaluate-3/7",
+            group="Evaluate-3/7#2",
             config=vars(args)
         )
 
@@ -94,6 +94,10 @@ def main():
     for batch_idx, (images, _) in enumerate(test_loader):
         images = images.to(device)
         b, c, h, w = images.shape
+        weights_nan = False
+        ideal_score_nan = False
+        scores_nan = False
+        loss_nan = False
 
         # ---- safe per-image time-step sampling ----
         eps = 1e-4                                # keep away from 0 and 1
@@ -115,13 +119,27 @@ def main():
 
         loss = mse(predicted_score, ideal_score)
 
+        if torch.isnan(ideal_score).sum():
+            print("Nan Detected in Ideal Score")
+            ideal_score_nan = True
+        if torch.isnan(scores).sum():
+            print("Nan Detected in Scores")
+            scores_nan = True
+        if torch.isnan(weights).sum():
+            print("Nan Detected in Weights")
+            weights_nan = True
+        if torch.isnan(loss).sum():
+            print("Nan Detected in Loss")
+            loss_nan = True
+
         if args.wandb:
             wandb.log({
                 "Loss": loss.mean().item(),
                 "t (Time)" : t[0].item(),
-                "weights" : weights.detach().cpu().numpy(),
-                "Predicted Score" : predicted_score.detach().cpu().numpy(),
-                "Ideal Score" : ideal_score.detach().cpu().numpy()
+                "Weights Nan" : weights_nan,
+                "Scores Nan" : scores_nan,
+                "Ideal Score Nan" : ideal_score_nan,
+                "Los Nan" : loss_nan
             })
         
         for img_idx in range(b):
@@ -139,10 +157,9 @@ def main():
 
     # Finish W&B
     if args.wandb:
-        if not step_logs.empty:
-            table = wandb.Table(dataframe=step_logs)
-            wandb.log({"Evaluation": table})
         wandb.finish()
+        
+    step_logs.to_pickle("evaluation_logs3-7.pkl", compression="gzip")
 
 
 if __name__ == '__main__':
