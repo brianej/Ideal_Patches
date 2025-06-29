@@ -98,7 +98,7 @@ def main():
     if args.wandb:
         import wandb
         wandb.init(entity='brianej-personal', project='Ideal Patches',
-                   name='Inference', config=vars(args))
+                   group="Trajectory-3-7", config=vars(args))
         wandb.watch(model, log='all')
 
     # enable cuDNN auto-tuner
@@ -125,10 +125,9 @@ def main():
 
         if args.wandb:
             images_to_log = [wandb.Image(img.detach().cpu()) for img in points]
-            wandb.log({'step': step, 
-                       'loss': loss.mean().item(),
-                       'timestep': t_val, 
-                       'images': images_to_log})
+            wandb.log({'Loss': loss.mean().item(),
+                       'Timestep': t_val, 
+                       'Images': images_to_log})
 
         for idx in range(samples_per_rank):
             log_df.loc[len(log_df)] = {
