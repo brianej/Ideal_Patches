@@ -5,6 +5,7 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 import pandas as pd
+from collections import OrderedDict
 
 from small_model import SmallModel
 from train_smallmodel import generate_patch_estimators, cosine_noise_schedule
@@ -54,8 +55,16 @@ def main():
 
     input_shape = (metadata['num_channels'], metadata['image_size'], metadata['image_size'])
     model = SmallModel(input_shape, args.patch_sizes).to(device)
-    state = torch.load('./model_checkpoints/smallmodel_epoch2_batch0_re.pt')
-    model.load_state_dict(state)
+    state = torch.load('./model_checkpoints/smallmodel_epoch2_batch0-3-7.pt', weights_only=True)
+    fixed_state = OrderedDict()
+    for k, v in state.items():
+        if k.startswith('module._orig_mod.'):
+            new_key = k[len('module._orig_mod.'):]
+        else:
+            new_key = k
+        fixed_state[new_key] = v
+
+    model.load_state_dict(fixed_state)
     model.eval()
 
     estimators = generate_patch_estimators(metadata['image_size'], args.patch_sizes, dataset, cosine_noise_schedule, batch_size=args.num_batches, device=device)
@@ -83,7 +92,7 @@ def main():
     points = torch.empty(samples_per_rank, metadata['num_channels'], metadata['image_size'], metadata['image_size'], device=device)
     dist.scatter(points, scatter_list=scatter_list, src=0)
 
-    trajectories = torch.empty((args.num_steps+1, samples_per_rank, metadata['num_channels'], metadata['image_size'], metadata['image_size']))
+    trajectories = torch.empty((args.steps+1, samples_per_rank, metadata['num_channels'], metadata['image_size'], metadata['image_size']))
     trajectories[0, :, :, :, :] = points
 
     if args.wandb:
@@ -96,7 +105,7 @@ def main():
     torch.backends.cudnn.benchmark = True
 
     for step in range(1, args.steps+1):
-        t_val = 1 - step * args.step_size
+        t_val = 1 - step * args.delta
         t = torch.tensor([t_val], device=device)
         beta_t = cosine_noise_schedule(t)
 
@@ -109,7 +118,7 @@ def main():
         weights = model(points, t)
         predicted_score = torch.sum(weights * scores, dim=1)
 
-        points = backward_step(predicted_score, points, beta_t, args.step_size)
+        points = backward_step(predicted_score, points, beta_t, args.delta)
         trajectories[step, :, :, :, :] = points
 
         loss = mse(predicted_score, ideal_score)
