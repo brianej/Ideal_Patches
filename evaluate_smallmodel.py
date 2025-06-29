@@ -51,7 +51,7 @@ def main():
     model = SmallModel(input_shape, args.patch_sizes).to(device)
     model = torch.compile(model)
     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[device.index])
-    state_dict = torch.load("./model_checkpoints/smallmodel_epoch2_batch0-3-7.pt")
+    state_dict = torch.load("./model_checkpoints/smallmodel_epoch2_batch0-3-15-27.pt")
     model.load_state_dict(state_dict)
     model.eval()
 
@@ -70,7 +70,7 @@ def main():
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
-            group="Evaluate-3/7#2",
+            group="Evaluate-3-15-27#2",
             config=vars(args)
         )
 
@@ -90,6 +90,8 @@ def main():
             "Ideal Score",
         ]
     )
+
+    rank = dist.get_rank()
 
     for batch_idx, (images, _) in enumerate(test_loader):
         images = images.to(device)
@@ -159,7 +161,7 @@ def main():
     if args.wandb:
         wandb.finish()
         
-    step_logs.to_pickle("evaluation_logs3-7.pkl", compression="gzip")
+    step_logs.to_pickle(f"evaluation_logs3-7{rank}.pkl", compression="gzip")
 
 
 if __name__ == '__main__':
