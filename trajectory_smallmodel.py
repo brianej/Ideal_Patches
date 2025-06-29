@@ -83,8 +83,7 @@ def main():
     points = torch.empty(samples_per_rank, metadata['num_channels'], metadata['image_size'], metadata['image_size'], device=device)
     dist.scatter(points, scatter_list=scatter_list, src=0)
 
-    points = torch.rand(args.num_samples, metadata['num_channels'], metadata['image_size'], metadata['image_size'], generator=noise_gen)
-    trajectories = torch.empty((args.num_steps, args.num_samples, metadata['num_channels'], metadata['image_size'], metadata['image_size']))
+    trajectories = torch.empty((args.num_steps+1, samples_per_rank, metadata['num_channels'], metadata['image_size'], metadata['image_size']))
     trajectories[0, :, :, :, :] = points
 
     if args.wandb:
