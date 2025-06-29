@@ -2,6 +2,7 @@ import argparse
 import os
 import random
 import torch
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 import pandas as pd
 
@@ -40,10 +41,14 @@ def main():
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    dist.init_process_group(backend='nccl')
+    local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    torch.cuda.set_device(local_rank)
+    device = torch.device(f'cuda:{local_rank}')
 
-    device_ids = list(range(torch.cuda.device_count()))
-    device = torch.device(f'cuda:{device_ids[0]}')
+    rank = dist.get_rank()
+    world_size = dist.get_world_size()
+    device_ids = [local_rank]
 
     dataset, metadata = get_dataset(args.dataset, train=False)
 
@@ -66,6 +71,18 @@ def main():
     # sizes are comparable.  A dedicated seed ensures reproducibility
     noise_gen = torch.Generator(device=device)
     noise_gen.manual_seed(args.noise_seed)
+
+    samples_per_rank = args.num_samples // world_size
+
+    if rank == 0:
+        all_points = torch.rand(args.num_samples, metadata['num_channels'], metadata['image_size'], metadata['image_size'], generator=noise_gen, device=device)
+        scatter_list = list(all_points.chunk(world_size))
+    else:
+        scatter_list = None
+
+    points = torch.empty(samples_per_rank, metadata['num_channels'], metadata['image_size'], metadata['image_size'], device=device)
+    dist.scatter(points, scatter_list=scatter_list, src=0)
+
     points = torch.rand(args.num_samples, metadata['num_channels'], metadata['image_size'], metadata['image_size'], generator=noise_gen)
     trajectories = torch.empty((args.num_steps, args.num_samples, metadata['num_channels'], metadata['image_size'], metadata['image_size']))
     trajectories[0, :, :, :, :] = points
@@ -76,6 +93,9 @@ def main():
                    name='Inference', config=vars(args))
         wandb.watch(model, log='all')
 
+    # enable cuDNN auto-tuner
+    torch.backends.cudnn.benchmark = True
+
     for step in range(1, args.steps+1):
         t_val = 1 - step * args.step_size
         t = torch.tensor([t_val], device=device)
@@ -83,7 +103,7 @@ def main():
 
         ideal_score = ideal_estimator(points, t).to(device)
 
-        scores = torch.zeros(args.num_samples, len(args.patch_sizes), metadata['num_channels'], metadata['image_size'], metadata['image_size'], device=device)
+        scores = torch.zeros(samples_per_rank, len(args.patch_sizes), metadata['num_channels'], metadata['image_size'], metadata['image_size'], device=device)
         for i, est in enumerate(estimators):
             scores[:, i] = est(points, t).to(device)
 
@@ -102,7 +122,7 @@ def main():
                        'timestep': t_val, 
                        'images': images_to_log})
 
-        for idx in range(args.num_samples):
+        for idx in range(samples_per_rank):
             log_df.loc[len(log_df)] = {
                 'Element': idx,
                 'Timestep': t_val,
@@ -117,8 +137,8 @@ def main():
     if args.wandb:
         wandb.finish()
         
-    log_df.to_pickle("evaluation_logs3-7.pkl", compression="gzip")
-    torch.save(trajectories, "tensor.pt")
+    log_df.to_pickle(f"evaluation_logs3-7{rank}.pkl", compression="gzip")
+    torch.save(trajectories, f"tensor-3-7-{rank}.pt")
 
 
 if __name__ == '__main__':
