@@ -119,7 +119,7 @@ def main():
         predicted_score = torch.sum(weights * scores, dim=1)
 
         points = backward_step(predicted_score, points, beta_t, args.delta)
-        trajectories[step, :, :, :, :] = points
+        trajectories[step+1, :, :, :, :] = points
 
         loss = mse(predicted_score, ideal_score)
 

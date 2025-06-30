@@ -51,7 +51,7 @@ def main():
     dataset, metadata = get_dataset(args.dataset, train=False)
 
     estimator = LEScore(dataset, schedule=cosine_noise_schedule, kernel_size=args.patch_size, 
-                                  batch_size=args.batch_size, max_samples=args.max_samples, 
+                                  batch_size=args.num_batches, max_samples=20000, 
                                   conditional=False).to(device)
     estimator = torch.nn.DataParallel(estimator, device_ids=device_ids)
     ideal_estimator = IdealScore(dataset, schedule=cosine_noise_schedule).to(device)
@@ -98,7 +98,7 @@ def main():
         predicted_score = estimator(points, t)
 
         points = backward_step(predicted_score, points, beta_t, args.delta)
-        trajectories[step, :, :, :, :] = points
+        trajectories[step+1, :, :, :, :] = points
 
         loss = mse(predicted_score, ideal_score)
 
