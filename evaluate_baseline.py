@@ -61,7 +61,7 @@ def main():
         wandb.init(
             entity="brianej-personal",
             project="Ideal Patches", 
-            group=f"Baseline {args.patch_size}",
+            group=f"Trajectory Baseline {args.patch_size}",
             config=vars(args)
         )
 
