@@ -120,7 +120,7 @@ def main():
                 "Weights Nan" : weights_nan,
                 "Scores Nan" : scores_nan,
                 "Ideal Score Nan" : ideal_score_nan,
-                "Los Nan" : loss_nan
+                "Loss Nan" : loss_nan
             })
         
         for img_idx in range(b):
