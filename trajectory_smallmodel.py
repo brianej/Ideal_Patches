@@ -144,8 +144,8 @@ def main():
     if args.wandb:
         wandb.finish()
         
-    log_df.to_pickle(f"evaluation_logs3-7{rank}.pkl", compression="gzip")
-    torch.save(trajectories, f"tensor-3-7-{rank}.pt")
+    log_df.to_pickle(f"traj-evaluation_logs3-7{rank}#1.pkl", compression="gzip")
+    torch.save(trajectories, f"tensor-3-7-{rank}#1.pt")
 
 
 if __name__ == '__main__':
