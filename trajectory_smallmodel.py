@@ -98,13 +98,13 @@ def main():
     if args.wandb:
         import wandb
         wandb.init(entity='brianej-personal', project='Ideal Patches',
-                   group="Trajectory-3-7", config=vars(args))
+                   group="Trajectory-3-7#1", config=vars(args))
         wandb.watch(model, log='all')
 
     # enable cuDNN auto-tuner
     torch.backends.cudnn.benchmark = True
 
-    for step in range(1, args.steps+1):
+    for step in range(args.steps):
         t_val = 1 - step * args.delta
         t = torch.tensor([t_val], device=device)
         beta_t = cosine_noise_schedule(t)
